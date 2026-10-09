@@ -133,3 +133,20 @@ test("departures: a late trip stays listed after its scheduled terminus time", (
   assert.equal(d[0].live, true);
   assert.equal(d[0].delay, 20);
 });
+
+test("estimateProgress: 50 m past a stop (between standing tolerance and the tie band) counts as passed", () => {
+  const p = estimateProgress(line.trips[0], coords, { lat: 52.21045, lon: 21.0, tsMin: T0 + 5 });
+  assert.equal(p.passed, 1);
+  const d = departures(line, stops, ["B1"], [{ tripId: line.trips[0][0], lat: 52.21045, lon: 21.0, tsMin: T0 + 5 }], T0 + 5).get("B1");
+  assert.ok(d.every((x) => x.sched !== T0 + 5), "the passed trip must not be listed at B");
+});
+
+test("estimateProgress: 50 m before a stop has not passed it", () => {
+  const p = estimateProgress(line.trips[0], coords, { lat: 52.20955, lon: 21.0, tsMin: T0 + 5 });
+  assert.equal(p.passed, 0);
+});
+
+test("estimateProgress: standing at a stop has not passed it", () => {
+  const p = estimateProgress(line.trips[0], coords, { lat: 52.21, lon: 21.0, tsMin: T0 + 5 });
+  assert.equal(p.passed, 0);
+});

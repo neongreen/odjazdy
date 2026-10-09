@@ -103,11 +103,16 @@ export function estimateProgress(trip, coords, vehicle, { maxOffRoute = 300 } = 
     const sched = first + offs[j] + f * (offs[j + 1] - offs[j]);
     cands.push({ delay: vehicle.tsMin - sched, j, f, dist });
   }
-  if (!cands.length) return null;
+  // A projection clamped to a segment end is the shared stop seen from the wrong side
+  // whenever the adjacent segment holds the vehicle in its interior; drop it.
+  const plausible = cands.filter((c) =>
+    !(c.f === 1 && cands.some((o) => o.j === c.j + 1 && o.f > 0)) &&
+    !(c.f === 0 && cands.some((o) => o.j === c.j - 1 && o.f < 1)));
+  if (!plausible.length) return null;
   // The nearest segment wins. Only when the route passes the same place twice
   // (several segments about equally near) does time decide between them.
-  const minDist = Math.min(...cands.map((c) => c.dist));
-  const best = cands
+  const minDist = Math.min(...plausible.map((c) => c.dist));
+  const best = plausible
     .filter((c) => c.dist <= minDist + 60)
     .reduce((a, b) => (Math.abs(b.delay) < Math.abs(a.delay) ? b : a));
   // Before the scheduled start the vehicle waits at the terminus: it cannot be early.
