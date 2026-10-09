@@ -1,0 +1,7 @@
+stop_id,stop_name,stop_code,platform_code,stop_lat,stop_lon,location_type,parent_station
+100101,Alfa,01,,52.2000,21.0000,0,
+100201,Beta,01,,52.2100,21.0000,0,
+100301,Gamma,01,,52.2200,21.0000,0,
+900101,Unused,01,,52.3000,21.0000,0,
+M01,Kabaty,,,52.1000,21.0500,0,
+M02,Natolin,,,52.1100,21.0500,0,
