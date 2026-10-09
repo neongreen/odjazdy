@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f2efe8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121211" media="(prefers-color-scheme: dark)">
+<title>odjazdy — автобусы и трамваи рядом</title>
+<meta name="description" content="Ближайшие отправления автобусов и трамваев Варшавы рядом с вами">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23c8102e'/%3E%3Ctext x='16' y='22' font-family='sans-serif' font-size='16' font-weight='700' fill='white' text-anchor='middle'%3Eo%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="page">
+  <header class="top">
+    <h1 class="brand">odjazdy</h1>
+    <button class="where" id="where" type="button" aria-live="polite">Определяю, где вы…</button>
+  </header>
+
+  <form class="ask" id="ask" autocomplete="off">
+    <label class="ask-label" for="line">Какая линия?</label>
+    <div class="ask-row">
+      <input id="line" class="line-input" name="line" inputmode="text" autocapitalize="characters" spellcheck="false" maxlength="5" placeholder="175">
+      <button class="clear" id="clear" type="button" aria-label="Очистить" hidden>×</button>
+    </div>
+  </form>
+
+  <section class="place" id="place" hidden>
+    <label class="place-label" for="stopq">Найти остановку</label>
+    <input id="stopq" class="stop-input" type="search" placeholder="Например, Plac Zbawiciela" autocomplete="off">
+    <ul class="stop-results" id="stopResults"></ul>
+  </section>
+
+  <section id="results" class="results" aria-live="polite"></section>
+
+  <footer class="foot" id="foot">
+    Расписание: ZTM Warszawa, GTFS — Mikołaj Kuranowski (mkuran.pl), © OpenStreetMap.
+    Положение машин: Miasto Stołeczne Warszawa, <a href="https://api.um.warszawa.pl">api.um.warszawa.pl</a><span id="feedTime"></span>.
+    Время «в пути» — оценка по положению машины, ZTM не публикует прогнозы прибытия.
+  </footer>
+</main>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

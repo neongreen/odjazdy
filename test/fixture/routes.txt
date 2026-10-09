@@ -1,0 +1,3 @@
+route_id,agency_id,route_short_name,route_long_name,route_type,route_color,route_text_color
+175,0,175,Lotnisko Chopina – Pl. Piłsudskiego,3,880077,FFFFFF
+M1,0,M1,Kabaty – Młociny,1,,
