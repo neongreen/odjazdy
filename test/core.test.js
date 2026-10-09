@@ -118,3 +118,18 @@ test("estimateProgress: before the scheduled start the vehicle counts as waiting
   const p = estimateProgress(line.trips[0], coords, { lat: 52.2005, lon: 21.0, tsMin: T0 - 4 });
   assert.deepEqual(p, { delay: 0, passed: -1, waiting: true });
 });
+
+test("estimateProgress: vehicle just past a stop is on the next segment, not the previous endpoint", () => {
+  // ~111 m north of Beta, i.e. already left Beta. Observed at T0+5 exactly when Beta was scheduled,
+  // which would make the previous segment's endpoint look like a perfect time match.
+  const p = estimateProgress(line.trips[0], coords, { lat: 52.211, lon: 21.0, tsMin: T0 + 5 });
+  assert.equal(p.passed, 1);
+});
+
+test("departures: a late trip stays listed after its scheduled terminus time", () => {
+  // Trip 1 runs 20 min late: it is halfway A->B at T0+22.5, its timetable ended at T0+10.
+  const v = [{ tripId: "2026-10-09:175:PtS:1:1000", lat: 52.205, lon: 21.0, tsMin: T0 + 22.5 }];
+  const d = departures(line, stops, ["B1"], v, T0 + 22.5).get("B1");
+  assert.equal(d[0].live, true);
+  assert.equal(d[0].delay, 20);
+});

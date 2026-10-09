@@ -70,7 +70,8 @@ def safe_line_name(line: str) -> str:
 def build(feed: Feed, now: datetime) -> dict:
     now_local = now.astimezone(TZ)
     today = now_local.date()
-    dates = [today - timedelta(days=1), today, today + timedelta(days=1)]
+    # Day+2 is included because early trips of that service day fall inside the window end.
+    dates = [today + timedelta(days=k) for k in (-1, 0, 1, 2)]
     window_start = int(now.timestamp()) - PAST_GRACE_MIN * 60
     window_end = service_day_reference(today + timedelta(days=2)) + 4 * 3600
 

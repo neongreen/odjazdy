@@ -43,13 +43,24 @@ async function loadIndex() {
   state.validUntil = idx.validUntil;
 }
 
+// Resolves to the line JSON, or null after a failed load. A failure is not cached:
+// the next call (retry button or the periodic refresh) fetches again.
 async function loadLine(line) {
-  if (state.lineData.has(line)) return state.lineData.get(line);
+  if (state.lineData.get(line)) return state.lineData.get(line);
   const safe = line.replace(/[^A-Za-z0-9_-]/g, "_");
-  const res = await fetch(`/data/lines/${safe}.json`);
-  const data = res.ok ? await res.json() : null;
+  let data = null;
+  try {
+    const res = await fetch(`/data/lines/${safe}.json`);
+    if (res.ok) data = await res.json();
+  } catch {
+    data = null;
+  }
   state.lineData.set(line, data);
   return data;
+}
+
+function showLine(line) {
+  loadLine(line).then(() => { render(); refreshVehicles(); });
 }
 
 async function refreshVehicles() {
@@ -111,7 +122,7 @@ function setLine(raw, { push = true } = {}) {
   }
   state.vehicles = { line, list: [], time: null, error: null };
   render();
-  if (line && state.lines?.has(line)) loadLine(line).then(() => { render(); refreshVehicles(); });
+  if (line && state.lines?.has(line)) showLine(line);
 }
 
 function renderWhere() {
@@ -155,7 +166,7 @@ function renderLine() {
   const head = `<div class="line-head">${chip(line, "span")}<span class="line-name">${esc(info.name)}</span></div>`;
   const data = state.lineData.get(line);
   if (data === undefined) return head + `<p class="empty">Загружаю расписание…</p>`;
-  if (data === null) return head + `<p class="empty">Не удалось загрузить расписание линии.</p>`;
+  if (data === null) return head + `<p class="empty">Не удалось загрузить расписание линии. <button type="button" class="retry" data-retry>Повторить</button></p>`;
 
   const now = nowMin();
   // Some poles list the line only for depot or night variants; prefer poles with departures soon.
@@ -212,7 +223,9 @@ function render() {
     ? `, данные на ${new Date(state.vehicles.time).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Europe/Warsaw" })}`
     : "";
   if (!state.stops) {
-    els.results.innerHTML = `<p class="empty">Загружаю остановки…</p>`;
+    els.results.innerHTML = state.indexError
+      ? `<p class="empty">Не удалось загрузить данные. Проверьте соединение. <button type="button" class="retry" data-retry>Повторить</button></p>`
+      : `<p class="empty">Загружаю остановки…</p>`;
     return;
   }
   if (state.validUntil && nowMin() > state.validUntil) {
@@ -239,6 +252,10 @@ els.line.addEventListener("input", () => {
 });
 els.clear.addEventListener("click", () => { setLine(""); els.line.focus(); });
 els.results.addEventListener("click", (e) => {
+  if (e.target.closest("[data-retry]")) {
+    if (!state.stops) startup(); else showLine(state.line);
+    return;
+  }
   const b = e.target.closest("[data-line]");
   if (b) { setLine(b.dataset.line); window.scrollTo({ top: 0, behavior: "smooth" }); }
 });
@@ -272,9 +289,21 @@ els.stopResults.addEventListener("click", (e) => {
 // Start
 const initial = new URL(location.href).searchParams.get("l");
 locate();
-loadIndex().then(() => {
-  if (initial) setLine(initial, { push: false }); else render();
-}).catch(() => { els.results.innerHTML = `<p class="empty">Не удалось загрузить данные. Проверьте соединение.</p>`; });
-setInterval(render, 15000);
-setInterval(() => { if (!document.hidden) refreshVehicles(); }, 20000);
+function startup() {
+  state.indexError = false;
+  render();
+  loadIndex().then(() => {
+    if (initial && !state.line) setLine(initial, { push: false }); else if (state.line) setLine(state.line); else render();
+  }).catch(() => {
+    state.indexError = true;
+    render();
+  });
+}
+startup();
+setInterval(() => { if (state.stops) render(); }, 15000);
+setInterval(() => {
+  if (document.hidden) return;
+  if (state.line && state.lines?.has(state.line) && state.lineData.get(state.line) === null) showLine(state.line);
+  else refreshVehicles();
+}, 20000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshVehicles(); });

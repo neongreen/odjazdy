@@ -33,6 +33,12 @@ class BuildDataTest(unittest.TestCase):
         self.assertEqual(late[2], unix_min("2026-10-11T00:30:00+02:00"))
         self.assertEqual(late[5], [1, 2])  # no-pickup stop and the terminus are not departures
 
+    def test_window_reaches_early_trips_two_days_ahead(self):
+        trips = self.result["lines"]["175"]["trips"]
+        early = next(t for t in trips if t[0] == "2026-10-11:175:NdS:1:0330")
+        self.assertEqual(early[2], unix_min("2026-10-11T03:30:00+02:00"))
+        self.assertLessEqual(early[2], self.result["index"]["validUntil"])
+
     def test_frequencies_expand_to_approximate_runs(self):
         metro = self.result["lines"]["M1"]["trips"]
         self.assertEqual([t[2] for t in metro], [unix_min("2026-10-09T09:00:00+02:00"), unix_min("2026-10-09T09:10:00+02:00")])

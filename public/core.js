@@ -95,17 +95,21 @@ export function estimateProgress(trip, coords, vehicle, { maxOffRoute = 300 } = 
   const first = trip[T_FIRST];
   const offs = trip[T_OFFSETS];
   const p = [vehicle.lat, vehicle.lon];
-  let best = null;
+  const cands = [];
   for (let j = 0; j + 1 < coords.length; j++) {
     if (!coords[j] || !coords[j + 1]) continue;
     const { dist, f } = projectOnSegment(p, coords[j], coords[j + 1]);
     if (dist > maxOffRoute) continue;
     const sched = first + offs[j] + f * (offs[j + 1] - offs[j]);
-    const delay = vehicle.tsMin - sched;
-    // A route can pass the same place twice; pick the candidate closest in time.
-    if (!best || Math.abs(delay) < Math.abs(best.delay)) best = { delay, j, f, dist };
+    cands.push({ delay: vehicle.tsMin - sched, j, f, dist });
   }
-  if (!best) return null;
+  if (!cands.length) return null;
+  // The nearest segment wins. Only when the route passes the same place twice
+  // (several segments about equally near) does time decide between them.
+  const minDist = Math.min(...cands.map((c) => c.dist));
+  const best = cands
+    .filter((c) => c.dist <= minDist + 60)
+    .reduce((a, b) => (Math.abs(b.delay) < Math.abs(a.delay) ? b : a));
   // Before the scheduled start the vehicle waits at the terminus: it cannot be early.
   if (vehicle.tsMin < first || (best.j === 0 && best.f === 0)) return { delay: Math.max(0, best.delay), passed: -1, waiting: true };
   // Buses and trams rarely run more than a few minutes early; a larger negative delay
@@ -159,7 +163,8 @@ export function departures(lineData, stopsById, poleIds, vehicles, nowMin, { hor
   lineData.trips.forEach((t, ti) => {
     const first = t[T_FIRST];
     const offs = t[T_OFFSETS];
-    if (first > nowMin + horizon || first + offs[offs.length - 1] < nowMin - 5) return;
+    // Keep trips whose timetable ended up to 90 min ago: a late vehicle may still be ahead of the stop.
+    if (first > nowMin + horizon || first + offs[offs.length - 1] < nowMin - 90) return;
     const nodep = new Set(t[T_NODEP]);
     const live = progress.get(ti);
     t[T_STOPS].forEach((si, pos) => {

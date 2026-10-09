@@ -180,3 +180,11 @@ button.chip:active { transform: scale(0.96); }
   line-height: 1.5;
 }
 .foot a { color: inherit; }
+
+.retry {
+  margin-left: 6px;
+  color: var(--tram);
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
