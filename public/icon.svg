@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#c8102e"/><g transform="translate(-10 -6)">
+  <!-- overhead wire and pantograph -->
+  <path d="M40 66 H472" stroke="#2a0a10" stroke-opacity=".35" stroke-width="5" stroke-linecap="round"/>
+  <path d="M256 112 L222 90 L256 68 L290 90 Z" fill="none" stroke="#f2efe8" stroke-width="7" stroke-linejoin="round"/>
+  <!-- tram body, front view -->
+  <path d="M150 400 V182 C150 140 176 112 224 112 H288 C336 112 362 140 362 182 V400 Z" fill="#f2efe8" stroke="#161513" stroke-width="6" stroke-linejoin="round"/>
+  <!-- destination display -->
+  <rect x="198" y="128" width="116" height="22" rx="6" fill="#161513"/>
+  <rect x="210" y="136" width="54" height="6" rx="3" fill="#f5b400"/>
+  <rect x="272" y="136" width="30" height="6" rx="3" fill="#f5b400" fill-opacity=".55"/>
+  <!-- windscreen -->
+  <path d="M170 168 C172 160 178 158 186 158 H326 C334 158 340 160 342 168 L352 262 H160 Z" fill="#161513"/>
+  <path d="M190 172 L214 172 L196 248 L176 248 Z" fill="#fff" fill-opacity=".14"/>
+  <!-- red livery band -->
+  <rect x="153" y="286" width="206" height="26" fill="#8e0b21"/>
+  <rect x="153" y="318" width="206" height="8" fill="#f5b400"/>
+  <!-- headlights -->
+  <circle cx="186" cy="356" r="15" fill="#161513"/>
+  <circle cx="186" cy="356" r="8" fill="#fff6d6"/>
+  <circle cx="326" cy="356" r="15" fill="#161513"/>
+  <circle cx="326" cy="356" r="8" fill="#fff6d6"/>
+  <!-- bumper and rails -->
+  <rect x="140" y="392" width="232" height="18" rx="9" fill="#161513"/>
+  <path d="M120 446 H392" stroke="#2a0a10" stroke-opacity=".35" stroke-width="6" stroke-linecap="round"/>
+  <!-- paper ticket, tilted, with perforation, punched holes and a printed line -->
+  <g transform="translate(330 352) rotate(-14)">
+    <path d="M-84 -56 H84 A12 12 0 0 1 96 -44 V-14 A14 14 0 0 0 96 14 V44 A12 12 0 0 1 84 56 H-84 A12 12 0 0 1 -96 44 V14 A14 14 0 0 0 -96 -14 V-44 A12 12 0 0 1 -84 -56 Z" fill="#fffaf0" stroke="#161513" stroke-width="6" stroke-linejoin="round"/>
+    <path d="M-44 -50 V50" stroke="#161513" stroke-width="4" stroke-dasharray="8 8"/>
+    <rect x="-28" y="-34" width="104" height="18" rx="4" fill="#f5b400"/>
+    <rect x="-28" y="-6" width="78" height="8" rx="4" fill="#161513"/>
+    <rect x="-28" y="12" width="56" height="8" rx="4" fill="#161513" fill-opacity=".45"/>
+    <circle cx="-70" cy="-26" r="7" fill="#161513"/>
+    <circle cx="-70" cy="0" r="7" fill="#161513"/>
+    <circle cx="-70" cy="26" r="7" fill="#161513"/>
+  </g>
+</g></svg>
