@@ -1,0 +1,14 @@
+{
+  "name": "odjazdy",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "data": "python3 scripts/build_data.py",
+    "assemble": "rm -rf dist && mkdir -p dist && cp -r public/. dist/ && cp -r build/data dist/data",
+    "test": "node --test test/*.test.js && python3 -m unittest discover -s test -p 'test_*.py'",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.40.0"
+  }
+}
