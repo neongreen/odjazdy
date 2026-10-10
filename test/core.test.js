@@ -222,3 +222,13 @@ test("worker /api/transcribe: hints nearby stop names, caps size, refuses other 
   assert.equal((await post(new Uint8Array(1_000_001))).status, 413);
   assert.equal((await post(new Uint8Array(10), { origin: "https://evil.example" })).status, 403);
 });
+
+test("onwardTimes: the same run's later stops, with the live delay carried", async () => {
+  const { onwardTimes } = await import("../public/core.js");
+  // Trip 0 runs A(+0) -> B(+5) -> C(+10).
+  assert.deepEqual(onwardTimes(line, stops, 0, 0, ["Gamma", "Beta"], 0), [{ name: "Beta", at: T0 + 5 }, { name: "Gamma", at: T0 + 10 }]);
+  assert.deepEqual(onwardTimes(line, stops, 0, 1, ["Gamma", "Alfa"], 3), [{ name: "Gamma", at: T0 + 13 }]); // Alfa is behind
+  assert.deepEqual(onwardTimes(line, stops, 0, 1, ["Beta"], 0), []); // boarding stop itself
+  const d = departures(line, stops, ["A1"], [], T0 - 1).get("A1")[0];
+  assert.deepEqual([d.trip, d.pos], [0, 0]);
+});

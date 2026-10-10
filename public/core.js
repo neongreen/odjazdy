@@ -129,7 +129,8 @@ export function estimateProgress(trip, coords, vehicle, { maxOffRoute = 300 } = 
 /**
  * Next departures of one line at the given poles.
  * lineData: the per-line JSON; vehicles: [{ tripId, lat, lon, tsMin }]; nowMin: Unix minutes.
- * Returns Map(poleId -> [{ headsign, sched, est, live, waiting, delay, approx }]) sorted by est.
+ * Returns Map(poleId -> [{ headsign, sched, est, live, waiting, delay, approx, trip, pos }]) sorted by est;
+ * trip and pos locate the departure in lineData.trips for onwardTimes.
  */
 export function departures(lineData, stopsById, poleIds, vehicles, nowMin, { horizon = 120, perPole = 4 } = {}) {
   const wanted = new Set(poleIds);
@@ -190,11 +191,33 @@ export function departures(lineData, stopsById, poleIds, vehicles, nowMin, { hor
         waiting: !!live?.waiting,
         delay: live ? Math.round(live.delay) : 0,
         approx: t[T_APPROX] === 1,
+        trip: ti,
+        pos,
       });
     });
   });
   for (const [id, list] of result) result.set(id, list.sort((a, b) => a.est - b.est).slice(0, perPole));
   return result;
+}
+
+/**
+ * When the same run reaches each named stop after leaving position `pos` of trip `tripIdx`.
+ * `shift` (minutes) carries the run's current delay forward. Returns [{ name, at (Unix min) }]
+ * in route order, first visit of each name only, the boarding stop itself excluded.
+ */
+export function onwardTimes(lineData, stopsById, tripIdx, pos, names, shift = 0) {
+  const wanted = new Set(names);
+  const t = lineData.trips[tripIdx];
+  const boarding = stopsById.get(lineData.stops[t[T_STOPS][pos]])?.name;
+  const seen = new Set();
+  const out = [];
+  for (let i = pos + 1; i < t[T_STOPS].length; i++) {
+    const name = stopsById.get(lineData.stops[t[T_STOPS][i]])?.name;
+    if (!name || !wanted.has(name) || name === boarding || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, at: t[T_FIRST] + t[T_OFFSETS][i] + shift });
+  }
+  return out;
 }
 
 /** "сейчас", "5 мин", or clock time for anything an hour away or more. */
