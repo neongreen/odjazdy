@@ -150,3 +150,22 @@ test("estimateProgress: standing at a stop has not passed it", () => {
   const p = estimateProgress(line.trips[0], coords, { lat: 52.21, lon: 21.0, tsMin: T0 + 5 });
   assert.equal(p.passed, 0);
 });
+
+test("searchStops: Russian spelling, ZTM abbreviations and sound-alike fallback", () => {
+  const s = indexStops([
+    ["T1", "Tarchomin", "01", 52.318, 20.953, []],
+    ["K1", "Kępa Tarchomińska", "01", 52.348, 20.925, []],
+    ["O1", "Orchowiecka", "01", 52.343, 20.973, []],
+    ["Z1", "Pl. Zbawiciela", "01", 52.219, 21.015, []],
+    ["G1", "Pl. Grzybowski", "01", 52.236, 21.003, []],
+    ["D1", "Dw. Centralny", "01", 52.228, 21.003, []],
+  ]);
+  const names = (q) => searchStops(s, q).map((g) => g.name);
+  assert.deepEqual(names("Тархомен"), ["Tarchomin", "Kępa Tarchomińska"]); // misspelt Cyrillic, nearest-sounding first
+  assert.deepEqual(names("тархомин"), ["Tarchomin", "Kępa Tarchomińska"]);
+  assert.deepEqual(names("Орховецка"), ["Orchowiecka"]);
+  assert.deepEqual(names("плац збавичеля"), ["Pl. Zbawiciela"]);
+  assert.deepEqual(names("дворзец центральны"), ["Dw. Centralny"]);
+  // A query that matches as typed does not drag in sound-alikes (Grzybowski ~ "zb").
+  assert.deepEqual(names("pl zbaw"), ["Pl. Zbawiciela"]);
+});

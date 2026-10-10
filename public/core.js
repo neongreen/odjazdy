@@ -210,26 +210,59 @@ export function formatDistance(m) {
   return `${(m / 1000).toFixed(1).replace(".", ",")} км`;
 }
 
-/** Case- and diacritic-insensitive key for stop name search ("Plac Zbawiciela" ~ "pl zbaw"). */
+// Russian letters to their usual Polish spelling, so "Тархомин" can find "Tarchomin".
+const CYR = {
+  а: "a", б: "b", в: "w", г: "g", д: "d", е: "e", ё: "io", ж: "rz", з: "z", и: "i", й: "j", к: "k", л: "l",
+  м: "m", н: "n", о: "o", п: "p", р: "r", с: "s", т: "t", у: "u", ф: "f", х: "ch", ц: "c", ч: "cz", ш: "sz",
+  щ: "szcz", ъ: "", ы: "y", ь: "", э: "e", ю: "ju", я: "ja",
+};
+
+/** Case- and diacritic-insensitive Latin key for stop name search ("Plac Zbawiciela" ~ "pl zbaw", "Тарх" ~ "tarch"). */
 export function searchKey(s) {
-  return String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/ł/g, "l").replace(/[^a-z0-9а-я ]/g, " ").replace(/\s+/g, " ").trim();
+  return String(s).toLowerCase().replace(/[а-яё]/g, (c) => CYR[c])
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/ł/g, "l")
+    .replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
 }
+
+/**
+ * Consonant skeleton of a search key: spellings that sound alike collapse ("ch"/"h", "cz"/"c",
+ * "sz"/"s", "rz"/"z"/"ż", "w"/"v") and vowels drop, so a misspelt or transliterated
+ * "Тархомен" (tarchomen) still meets "Tarchomin" (both "trhmn").
+ */
+export function skeleton(key) {
+  return key.replace(/ch/g, "h").replace(/cz/g, "c").replace(/sz/g, "s").replace(/rz/g, "z").replace(/w/g, "v")
+    .replace(/[aeiouyj ]/g, "").replace(/(.)\1+/g, "$1");
+}
+
+// ZTM abbreviates common words in stop names; searching for the full word should still match.
+const ABBR = { "pl.": "plac", "al.": "aleja", "dw.": "dworzec", "os.": "osiedle", "ul.": "ulica", "cm.": "cmentarz" };
+const expandName = (name) => name.split(/\s+/).map((w) => ABBR[w.toLowerCase()] || w).join(" ");
 
 export function searchStops(stopsById, query, limit = 8) {
   const q = searchKey(query);
   if (q.length < 2) return [];
   const words = q.split(" ");
+  const skel = words.map(skeleton);
   const seen = new Map();
   for (const s of stopsById.values()) {
-    const k = searchKey(s.name);
-    if (!words.every((w) => k.includes(w))) continue;
-    if (!seen.has(s.name)) seen.set(s.name, { name: s.name, poles: [], starts: k.startsWith(words[0]) });
-    seen.get(s.name).poles.push(s);
+    if (!seen.has(s.name)) {
+      const k = searchKey(s.name) + " | " + searchKey(expandName(s.name));
+      const exact = words.every((w) => k.includes(w));
+      const nameSkel = k.split(" ").map(skeleton).filter(Boolean).join(" ");
+      // Sound-alike matching only for words long enough not to match everything.
+      const fuzzy = !exact && skel.every((w, i) => w.length >= 3 ? nameSkel.includes(w) : k.includes(words[i]));
+      seen.set(s.name, exact || fuzzy ? { name: s.name, poles: [], rank: exact ? (k.startsWith(words[0]) ? 0 : 1) : nameSkel.startsWith(skel[0]) ? 2 : 3 } : null);
+    }
+    const g = seen.get(s.name);
+    if (g) g.poles.push(s);
   }
-  return [...seen.values()]
-    .sort((a, b) => (b.starts - a.starts) || a.name.localeCompare(b.name, "pl"))
+  const found = [...seen.values()].filter(Boolean);
+  // Sound-alike matches are a fallback: when the query matches names as typed, they are noise.
+  const hasExact = found.some((g) => g.rank < 2);
+  return found.filter((g) => !hasExact || g.rank < 2)
+    .sort((a, b) => (a.rank - b.rank) || a.name.localeCompare(b.name, "pl"))
     .slice(0, limit)
-    .map((g) => ({ ...g, lat: avg(g.poles.map((p) => p.lat)), lon: avg(g.poles.map((p) => p.lon)) }));
+    .map((g) => ({ name: g.name, poles: g.poles, lat: avg(g.poles.map((p) => p.lat)), lon: avg(g.poles.map((p) => p.lon)) }));
 }
 
 const avg = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
