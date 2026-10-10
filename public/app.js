@@ -335,54 +335,65 @@ els.stopResults.addEventListener("click", (e) => {
 // (hinted with nearby stop names), and the text is matched against the stop list here.
 // Recording works in iOS Safari and home-screen apps, where browser speech recognition does not.
 const canRecord = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
-let recording = null; // { recorder, stream, ctx, timer }
+let recording = null; // the one live session; see startRecording
 els.mic.hidden = !canRecord;
 
 function stopRecording() {
-  if (!recording) return;
-  const { recorder, stream, ctx, timer } = recording;
-  clearInterval(timer);
-  if (recorder.state !== "inactive") recorder.stop();
-  stream.getTracks().forEach((t) => t.stop());
-  ctx?.close();
+  recording?.stop();
 }
 
+// Each session owns its stream, recorder, audio context and timer and cleans up only those.
+// It becomes `recording` before the permission prompt resolves, so a second tap during the
+// prompt cancels it instead of starting another capture.
 async function startRecording() {
+  const session = { cancelled: false, stream: null, recorder: null, ctx: null, timer: null };
+  session.stop = () => {
+    session.cancelled = true;
+    clearInterval(session.timer);
+    if (session.recorder && session.recorder.state !== "inactive") session.recorder.stop();
+    session.stream?.getTracks().forEach((t) => t.stop());
+    session.ctx?.close().catch(() => {});
+    if (recording === session) recording = null;
+    if (!session.recorder) { els.mic.classList.remove("listening"); setVoiceStatus(""); }
+  };
+  recording = session;
+  els.mic.classList.add("listening");
+  setVoiceStatus("Слушаю… назовите остановку");
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch {
+    if (recording === session) recording = null;
+    els.mic.classList.remove("listening");
     return setVoiceStatus("Нет доступа к микрофону. Разрешите его в настройках браузера.");
   }
+  session.stream = stream;
+  if (session.cancelled) return stream.getTracks().forEach((t) => t.stop());
   const recorder = new MediaRecorder(stream);
+  session.recorder = recorder;
   const chunks = [];
   recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
   recorder.onstop = () => {
-    recording = null;
     els.mic.classList.remove("listening");
     recognise(new Blob(chunks, { type: recorder.mimeType || "audio/mp4" }));
   };
   // Stop on its own: after ~1.2 s of quiet once speech was heard, or after 6 s.
-  let ctx = null, heard = false, quietSince = 0;
+  let heard = false, quietSince = 0, level = () => 0;
   const started = Date.now();
-  let level = () => 0;
   try {
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const analyser = ctx.createAnalyser();
+    session.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = session.ctx.createAnalyser();
     analyser.fftSize = 1024;
-    ctx.createMediaStreamSource(stream).connect(analyser);
+    session.ctx.createMediaStreamSource(stream).connect(analyser);
     const buf = new Float32Array(analyser.fftSize);
     level = () => { analyser.getFloatTimeDomainData(buf); return Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length); };
-  } catch { ctx = null; }
-  const timer = setInterval(() => {
+  } catch { session.ctx = null; }
+  session.timer = setInterval(() => {
     const now = Date.now();
     if (level() > 0.02) { heard = true; quietSince = 0; } else if (heard && !quietSince) quietSince = now;
-    if (now - started > 6000 || (heard && quietSince && now - quietSince > 1200)) stopRecording();
+    if (now - started > 6000 || (heard && quietSince && now - quietSince > 1200)) session.stop();
   }, 100);
-  recording = { recorder, stream, ctx, timer };
   recorder.start();
-  els.mic.classList.add("listening");
-  setVoiceStatus("Слушаю… назовите остановку");
 }
 
 async function recognise(blob) {
