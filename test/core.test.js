@@ -193,3 +193,16 @@ test("confidentMatch needs a clear winner", () => {
   assert.equal(confidentMatch([{ score: 0.7 }]), false);
   assert.equal(confidentMatch([{ score: 1 }, { score: 0.8 }]), true);
 });
+
+test("rankStopNames keeps a full stop name that contains a filler word", () => {
+  const s = indexStops([
+    ["M1", "Metro Ratusz Arsenał", "01", 52.245, 21.0, []],
+    ["R1", "Ratusz Arsenał", "01", 52.245, 21.001, []],
+    ["K1", "Kabaty", "01", 52.13, 21.06, []],
+  ]);
+  const r = rankStopNames(s, ["Metro Ratusz Arsenał"]);
+  assert.equal(r[0].name, "Metro Ratusz Arsenał");
+  assert.ok(confidentMatch(r));
+  assert.equal(rankStopNames(s, ["Ratusz Arsenał"])[0].name, "Ratusz Arsenał");
+  assert.equal(rankStopNames(s, ["метро Кабаты"])[0].name, "Kabaty"); // "metro" as a filler still works
+});

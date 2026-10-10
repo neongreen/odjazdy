@@ -296,16 +296,21 @@ const FILLER = new Set(["ostanowka", "ostanowki", "przystanek", "do", "na", "w",
  * Returns [{ name, score (0..1), poles, lat, lon }], best first.
  */
 export function rankStopNames(stopsById, transcripts, limit = 3) {
-  const spans = new Set();
+  const spans = new Map(); // skeleton -> number of spoken words it covers
+  const wordLists = [];
   for (const t of transcripts) {
-    const words = searchKey(translateRu(t)).split(" ").filter((w) => w && !FILLER.has(w));
+    const all = searchKey(translateRu(t)).split(" ").filter(Boolean);
+    // Filler words are tried both ways: "Metro" is filler in "метро Кабаты" but part of "Metro Młociny".
+    wordLists.push(all, all.filter((w) => !FILLER.has(w)));
+  }
+  for (const words of wordLists) {
     for (let i = 0; i < words.length; i++) {
       for (let j = i + 1; j <= Math.min(words.length, i + 3); j++) {
         const run = words.slice(i, j);
         // Russian often puts the adjective first ("центральный вокзал" = Dworzec Centralny).
         for (const order of j - i === 2 ? [run, [run[1], run[0]]] : [run]) {
           const sk = skeleton(order.join(""));
-          if (sk.length >= 3) spans.add(sk);
+          if (sk.length >= 3) spans.set(sk, Math.max(spans.get(sk) || 0, j - i));
         }
       }
     }
@@ -319,16 +324,23 @@ export function rankStopNames(stopsById, transcripts, limit = 3) {
   const scored = [];
   for (const [name, poles] of groups) {
     const forms = new Set([searchKey(name), searchKey(expandName(name))].map((k) => skeleton(k.replace(/ /g, ""))));
-    let best = 0;
+    let best = 0, covered = 0;
     for (const f of forms) {
-      for (const q of spans) {
+      for (const [q, words] of spans) {
         const score = 1 - levenshtein(q, f) / Math.max(q.length, f.length);
-        if (score > best) best = score;
+        if (score > best || (score === best && words > covered)) { best = score; covered = words; }
       }
     }
-    if (best >= 0.5) scored.push({ name, score: best, poles, lat: avg(poles.map((p) => p.lat)), lon: avg(poles.map((p) => p.lon)) });
+    if (best >= 0.5) scored.push({ name, score: best, covered, poles, lat: avg(poles.map((p) => p.lat)), lon: avg(poles.map((p) => p.lon)) });
   }
-  return scored.sort((a, b) => b.score - a.score || a.name.length - b.name.length).slice(0, limit);
+  // Equal scores: the name that accounts for more of what was said wins ("Metro Ratusz Arsenał" over "Ratusz Arsenał").
+  scored.sort((a, b) => b.score - a.score || b.covered - a.covered || a.name.length - b.name.length);
+  // A tie is resolved by coverage, so the runner-up counts as clearly behind.
+  if (scored[1] && scored[0].score === scored[1].score && scored[0].covered > scored[1].covered) {
+    scored[1].score -= 0.15;
+    scored.sort((a, b) => b.score - a.score || b.covered - a.covered || a.name.length - b.name.length);
+  }
+  return scored.slice(0, limit);
 }
 
 /** Whether a voice match is safe to apply without asking: strong and clearly ahead of the next one. */
