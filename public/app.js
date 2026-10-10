@@ -363,7 +363,9 @@ async function startRecording() {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch {
-    if (recording === session) recording = null;
+    // A cancelled or superseded request must not touch the UI of the session that replaced it.
+    if (session.cancelled || recording !== session) return;
+    recording = null;
     els.mic.classList.remove("listening");
     return setVoiceStatus("Нет доступа к микрофону. Разрешите его в настройках браузера.");
   }
