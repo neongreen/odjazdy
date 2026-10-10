@@ -204,3 +204,18 @@ button.chip:active { transform: scale(0.96); }
   text-underline-offset: 3px;
 }
 .not-it { margin-left: 6px; color: var(--tram); font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Starred stops */
+.star {
+  flex: none; width: 30px; height: 30px; margin: -4px 0 -4px 2px;
+  font-size: 19px; line-height: 30px; text-align: center; color: var(--muted);
+}
+.star.on { color: var(--tram); }
+.starred { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.starred[hidden] { display: none; }
+.starred-chip {
+  height: 32px; padding: 0 12px; border-radius: 16px;
+  border: 1px solid var(--rule); font-size: 15px; font-weight: 500;
+}
+.starred-chip::first-letter { color: var(--tram); }
+.onward { display: block; margin-top: 2px; color: var(--ink); font-size: 14px; font-weight: 500; }

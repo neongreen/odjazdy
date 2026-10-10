@@ -1,12 +1,12 @@
 import {
-  confidentMatch, departures, distanceM, formatDistance, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine,
+  confidentMatch, departures, distanceM, formatDistance, formatWait, indexStops, nearestGroups, normalizeLine, onwardTimes, polesForLine,
   rankStopNames, searchStops,
 } from "./core.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
   where: $("where"), line: $("line"), clear: $("clear"), ask: $("ask"), place: $("place"),
-  stopq: $("stopq"), stopResults: $("stopResults"), mic: $("mic"), voiceStatus: $("voiceStatus"), results: $("results"), feedTime: $("feedTime"),
+  starred: $("starred"), stopq: $("stopq"), stopResults: $("stopResults"), mic: $("mic"), voiceStatus: $("voiceStatus"), results: $("results"), feedTime: $("feedTime"),
 };
 
 const state = {
@@ -18,6 +18,20 @@ const state = {
   lineData: new Map(),
   vehicles: { line: "", list: [], time: null, error: null },
 };
+
+// Starred stops (by stop name), kept on this phone only.
+const STAR_KEY = "odjazdy.starred";
+const starred = new Set((() => { try { return JSON.parse(localStorage.getItem(STAR_KEY)) || []; } catch { return []; } })());
+function toggleStar(name) {
+  if (starred.has(name)) starred.delete(name); else starred.add(name);
+  try { localStorage.setItem(STAR_KEY, JSON.stringify([...starred])); } catch { /* private mode: keep for this visit */ }
+  render();
+}
+const starButton = (name) => {
+  const on = starred.has(name);
+  return `<button type="button" class="star${on ? " on" : ""}" data-star="${esc(name)}" aria-pressed="${on}" aria-label="${on ? "Убрать из избранного" : "В избранное"}: ${esc(name)}">${on ? "★" : "☆"}</button>`;
+};
+const clockAt = (unixMin) => new Date(unixMin * 60000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Warsaw" });
 
 const nowMin = () => Date.now() / 60000;
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -158,7 +172,7 @@ function renderNearby() {
   return `<h2 class="section-title">${title}</h2>
   <ul class="nearby">${groups.map((g) => `
     <li class="stop">
-      <div class="stop-head"><span class="stop-name">${esc(g.name)}</span><span class="dist">${distLabel(fromYou(g.poles))}</span></div>
+      <div class="stop-head"><span class="stop-name">${esc(g.name)}</span>${starButton(g.name)}<span class="dist">${distLabel(fromYou(g.poles))}</span></div>
       <div class="chips">${g.lines.sort(lineCompare).map((l) => chip(l)).join("")}</div>
     </li>`).join("")}
   </ul>`;
@@ -204,11 +218,11 @@ function renderLine() {
     const rows = list.map((d, i) => `
       <li class="dep ${i === 0 ? "first" : ""}">
         <span class="wait">${formatWait(d.est, now)}</span>
-        <span class="note">${oneHead ? "" : `<span class="to">→ ${esc(d.headsign)}</span>`}${depNote(d)}</span>
+        <span class="note">${oneHead ? "" : `<span class="to">→ ${esc(d.headsign)}</span>`}${depNote(d)}${onwardNote(data, d)}</span>
       </li>`).join("");
     return `<article class="pole">
       <div class="pole-head">
-        <span class="stop-name">${esc(p.name)}</span><span class="pole-code">${esc(p.code)}</span>
+        <span class="stop-name">${esc(p.name)}</span><span class="pole-code">${esc(p.code)}</span>${starButton(p.name)}
         <span class="dist">${distLabel(fromYou([p]))}</span>
       </div>
       ${oneHead ? `<div class="dir">→ ${esc(heads[0])}</div>` : ""}
@@ -219,6 +233,20 @@ function renderLine() {
   const live = state.vehicles.line === line && state.vehicles.error
     ? `<p class="live-off">Положение машин сейчас недоступно, показано расписание.</p>` : "";
   return head + (far ? `<p class="hint">Ближайшая остановка этой линии — ${formatDistance(poles[0].dist)} от вас.</p>` : "") + live + blocks;
+}
+
+// When this same bus or tram reaches the starred stops further along its route.
+function onwardNote(data, d) {
+  if (!starred.size) return "";
+  const later = onwardTimes(data, state.stops, d.trip, d.pos, [...starred], d.est - d.sched);
+  if (!later.length) return "";
+  return `<span class="onward">${later.map((o) => `★ ${esc(o.name)} ${d.approx ? "≈" : ""}${clockAt(o.at)}`).join(" · ")}</span>`;
+}
+
+function renderStarred() {
+  els.starred.hidden = !starred.size;
+  els.starred.innerHTML = [...starred].sort((a, b) => a.localeCompare(b, "pl"))
+    .map((n) => `<button type="button" class="starred-chip" data-goto="${esc(n)}">★ ${esc(n)}</button>`).join("");
 }
 
 function depNote(d) {
@@ -233,6 +261,7 @@ function depNote(d) {
 
 function render() {
   renderWhere();
+  renderStarred();
   els.feedTime.textContent = state.vehicles.time
     ? `, данные на ${new Date(state.vehicles.time).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Europe/Warsaw" })}`
     : "";
@@ -266,6 +295,8 @@ els.line.addEventListener("input", () => {
 });
 els.clear.addEventListener("click", () => { setLine(""); els.line.focus(); });
 els.results.addEventListener("click", (e) => {
+  const star = e.target.closest("[data-star]");
+  if (star) return toggleStar(star.dataset.star);
   if (e.target.closest("[data-retry]")) {
     if (!state.stops) startup(); else showLine(state.line);
     return;
@@ -298,6 +329,14 @@ function pickStop(g) {
   els.stopResults._found = [];
   render();
 }
+els.starred.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-goto]");
+  if (!b || !state.stops) return;
+  const poles = [...state.stops.values()].filter((s) => s.name === b.dataset.goto);
+  if (!poles.length) return;
+  pickStop({ name: b.dataset.goto, lat: poles.reduce((a, p) => a + p.lat, 0) / poles.length, lon: poles.reduce((a, p) => a + p.lon, 0) / poles.length });
+});
+
 // With a picked stop shown, an empty focused field offers the way back to the user's position.
 els.stopq.addEventListener("focus", () => { if (!els.stopq.value.trim()) showStops([]); });
 
