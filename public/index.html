@@ -35,9 +35,15 @@
     </div>
   </form>
 
-  <section class="place" id="place" hidden>
-    <label class="place-label" for="stopq">Найти остановку</label>
-    <input id="stopq" class="stop-input" type="search" placeholder="Например, Plac Zbawiciela" autocomplete="off">
+  <section class="place" id="place">
+    <div class="search-row">
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
+      <input id="stopq" class="stop-input" type="search" placeholder="Остановка или улица" aria-label="Найти остановку" autocomplete="off" enterkeyhint="search">
+      <button class="mic" id="mic" type="button" aria-label="Назвать остановку голосом" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>
+      </button>
+    </div>
+    <p class="voice-status" id="voiceStatus" aria-live="polite" hidden></p>
     <ul class="stop-results" id="stopResults"></ul>
   </section>
 

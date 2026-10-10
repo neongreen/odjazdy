@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  departures, estimateProgress, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine, searchStops, tripKey,
+  confidentMatch, departures, estimateProgress, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine, rankStopNames, searchStops, tripKey,
 } from "../public/core.js";
 import { filterFeed, lineOfTrip } from "../src/worker.js";
 
@@ -168,4 +168,57 @@ test("searchStops: Russian spelling, ZTM abbreviations and sound-alike fallback"
   assert.deepEqual(names("дворзец центральны"), ["Dw. Centralny"]);
   // A query that matches as typed does not drag in sound-alikes (Grzybowski ~ "zb").
   assert.deepEqual(names("pl zbaw"), ["Pl. Zbawiciela"]);
+});
+
+test("rankStopNames: dictated Russian resolves to the Polish stop name", () => {
+  const s = indexStops([
+    ["O1", "Orchowiecka", "01", 52.343, 20.973, []],
+    ["R1", "Rakowiecka", "01", 52.2, 21.0, []],
+    ["T1", "Tarchomin", "01", 52.318, 20.953, []],
+    ["D1", "Dw. Centralny", "01", 52.228, 21.003, []],
+    ["W1", "Warszawa Wschodnia", "01", 52.25, 21.05, []],
+    ["W2", "Warszawa Zachodnia", "01", 52.22, 20.96, []],
+  ]);
+  const top = (alts) => rankStopNames(s, alts)[0]?.name;
+  assert.equal(top(["Арховецка"]), "Orchowiecka"); // misheard first vowel
+  assert.ok(confidentMatch(rankStopNames(s, ["Арховецка"])));
+  assert.equal(top(["остановка Тархомин"]), "Tarchomin"); // filler word ignored
+  assert.equal(top(["центральный вокзал"]), "Dw. Centralny"); // Russian word + word order
+  assert.equal(top(["что-то совсем другое", "Варшава Восточная"]), "Warszawa Wschodnia"); // any alternative can win
+  assert.deepEqual(rankStopNames(s, ["ну"]), []);
+});
+
+test("confidentMatch needs a clear winner", () => {
+  assert.equal(confidentMatch([{ score: 0.9 }, { score: 0.85 }]), false);
+  assert.equal(confidentMatch([{ score: 0.7 }]), false);
+  assert.equal(confidentMatch([{ score: 1 }, { score: 0.8 }]), true);
+});
+
+test("rankStopNames keeps a full stop name that contains a filler word", () => {
+  const s = indexStops([
+    ["M1", "Metro Ratusz Arsenał", "01", 52.245, 21.0, []],
+    ["R1", "Ratusz Arsenał", "01", 52.245, 21.001, []],
+    ["K1", "Kabaty", "01", 52.13, 21.06, []],
+  ]);
+  const r = rankStopNames(s, ["Metro Ratusz Arsenał"]);
+  assert.equal(r[0].name, "Metro Ratusz Arsenał");
+  assert.ok(confidentMatch(r));
+  assert.equal(rankStopNames(s, ["Ratusz Arsenał"])[0].name, "Ratusz Arsenał");
+  assert.equal(rankStopNames(s, ["метро Кабаты"])[0].name, "Kabaty"); // "metro" as a filler still works
+});
+
+test("worker /api/transcribe: hints nearby stop names, caps size, refuses other origins", async () => {
+  const worker = (await import("../src/worker.js")).default;
+  const calls = [];
+  const env = {
+    ASSETS: { fetch: async () => new Response(JSON.stringify({ stops: [["a", "Orchowiecka", "01", 52.343, 20.973, []], ["b", "Pl. Narutowicza", "01", 52.219, 20.984, []]] })) },
+    AI: { run: async (model, input) => { calls.push({ model, input }); return { text: "Orchowiecka." }; } },
+  };
+  const post = (body, headers = {}) => worker.fetch(new Request("https://x.dev/api/transcribe?lat=52.34&lon=20.97", { method: "POST", body, headers }), env, {});
+  const ok = await post(new Uint8Array(3000));
+  assert.deepEqual(await ok.json(), { text: "Orchowiecka." });
+  assert.equal(calls[0].input.language, "ru");
+  assert.match(calls[0].input.initial_prompt, /^Остановка в Варшаве\. Например: Orchowiecka, Pl\. Narutowicza\.$/);
+  assert.equal((await post(new Uint8Array(1_000_001))).status, 413);
+  assert.equal((await post(new Uint8Array(10), { origin: "https://evil.example" })).status, 403);
 });

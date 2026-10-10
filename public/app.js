@@ -1,11 +1,12 @@
 import {
-  departures, distanceM, formatDistance, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine, searchStops,
+  confidentMatch, departures, distanceM, formatDistance, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine,
+  rankStopNames, searchStops,
 } from "./core.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
   where: $("where"), line: $("line"), clear: $("clear"), ask: $("ask"), place: $("place"),
-  stopq: $("stopq"), stopResults: $("stopResults"), results: $("results"), feedTime: $("feedTime"),
+  stopq: $("stopq"), stopResults: $("stopResults"), mic: $("mic"), voiceStatus: $("voiceStatus"), results: $("results"), feedTime: $("feedTime"),
 };
 
 const state = {
@@ -105,7 +106,6 @@ function locate() {
     },
     (err) => {
       state.geoError = err.code === 1 ? "denied" : "unavailable";
-      if (!state.loc) els.place.hidden = false;
       render();
     },
     { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 },
@@ -274,15 +274,47 @@ els.results.addEventListener("click", (e) => {
   if (b) { setLine(b.dataset.line); window.scrollTo({ top: 0, behavior: "smooth" }); }
 });
 els.where.addEventListener("click", () => {
-  els.place.hidden = !els.place.hidden;
-  if (!els.place.hidden) els.stopq.focus();
+  els.stopq.focus();
+  els.place.scrollIntoView({ behavior: "smooth", block: "center" });
 });
-els.stopq.addEventListener("input", () => {
-  const found = state.stops ? searchStops(state.stops, els.stopq.value) : [];
-  const gps = state.loc?.source === "stop" ? `<li><button type="button" class="stop-pick" data-gps>Моё местоположение</button></li>` : "";
-  els.stopResults.innerHTML = gps + found.map((g, i) =>
+
+function showStops(found, heading = "") {
+  const gps = state.loc?.source === "stop" && state.gps ? `<li><button type="button" class="stop-pick" data-gps>Моё местоположение</button></li>` : "";
+  els.stopResults.innerHTML = (heading ? `<li class="why">${heading}</li>` : "") + gps + found.map((g, i) =>
     `<li><button type="button" class="stop-pick" data-i="${i}">${esc(g.name)}</button></li>`).join("");
   els.stopResults._found = found;
+}
+
+function setVoiceStatus(html) {
+  els.voiceStatus.hidden = !html;
+  els.voiceStatus.innerHTML = html || "";
+}
+
+function pickStop(g) {
+  state.loc = { lat: g.lat, lon: g.lon, source: "stop", label: g.name };
+  els.stopq.value = "";
+  els.stopq.blur();
+  els.stopResults.innerHTML = "";
+  els.stopResults._found = [];
+  render();
+}
+// With a picked stop shown, an empty focused field offers the way back to the user's position.
+els.stopq.addEventListener("focus", () => { if (!els.stopq.value.trim()) showStops([]); });
+
+els.stopq.addEventListener("input", () => {
+  setVoiceStatus("");
+  const q = els.stopq.value;
+  if (!state.stops || !q.trim()) return showStops([]);
+  const found = searchStops(state.stops, q);
+  // Nothing matches as typed: offer the closest-sounding names instead of an empty list.
+  if (!found.length && q.trim().length >= 3) {
+    const guess = rankStopNames(state.stops, [q]);
+    return showStops(guess, guess.length ? "Возможно, вы имели в виду:" : "Ничего не нашлось");
+  }
+  showStops(found);
+});
+els.stopq.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && els.stopResults._found?.length) { e.preventDefault(); pickStop(els.stopResults._found[0]); }
 });
 els.stopResults.addEventListener("click", (e) => {
   const b = e.target.closest(".stop-pick");
@@ -290,14 +322,125 @@ els.stopResults.addEventListener("click", (e) => {
   if (b.dataset.gps !== undefined) {
     state.loc = state.gps ? { ...state.gps, source: "gps" } : null;
     if (!state.gps) locate();
-  } else {
-    const g = els.stopResults._found[Number(b.dataset.i)];
-    state.loc = { lat: g.lat, lon: g.lon, source: "stop", label: g.name };
+    els.stopq.value = "";
+    showStops([]);
+    setVoiceStatus("");
+    return render();
   }
-  els.place.hidden = true;
-  els.stopq.value = "";
-  els.stopResults.innerHTML = "";
-  render();
+  setVoiceStatus("");
+  pickStop(els.stopResults._found[Number(b.dataset.i)]);
+});
+
+// Voice: the phone records a few seconds of audio, our Worker transcribes it with Whisper
+// (hinted with nearby stop names), and the text is matched against the stop list here.
+// Recording works in iOS Safari and home-screen apps, where browser speech recognition does not.
+const canRecord = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+let recording = null; // the one live session; see startRecording
+els.mic.hidden = !canRecord;
+
+function stopRecording() {
+  recording?.stop();
+}
+
+// Each session owns its stream, recorder, audio context and timer and cleans up only those.
+// It becomes `recording` before the permission prompt resolves, so a second tap during the
+// prompt cancels it instead of starting another capture.
+async function startRecording() {
+  const session = { cancelled: false, stream: null, recorder: null, ctx: null, timer: null };
+  session.stop = () => {
+    session.cancelled = true;
+    clearInterval(session.timer);
+    if (session.recorder && session.recorder.state !== "inactive") session.recorder.stop();
+    session.stream?.getTracks().forEach((t) => t.stop());
+    session.ctx?.close().catch(() => {});
+    if (recording === session) recording = null;
+    if (!session.recorder) { els.mic.classList.remove("listening"); setVoiceStatus(""); }
+  };
+  recording = session;
+  els.mic.classList.add("listening");
+  setVoiceStatus("Слушаю… назовите остановку");
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    // A cancelled or superseded request must not touch the UI of the session that replaced it.
+    if (session.cancelled || recording !== session) return;
+    recording = null;
+    els.mic.classList.remove("listening");
+    return setVoiceStatus("Нет доступа к микрофону. Разрешите его в настройках браузера.");
+  }
+  session.stream = stream;
+  if (session.cancelled) return stream.getTracks().forEach((t) => t.stop());
+  const recorder = new MediaRecorder(stream);
+  session.recorder = recorder;
+  const chunks = [];
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    els.mic.classList.remove("listening");
+    recognise(new Blob(chunks, { type: recorder.mimeType || "audio/mp4" }));
+  };
+  // Stop on its own: after ~1.2 s of quiet once speech was heard, or after 6 s.
+  let heard = false, quietSince = 0, level = () => 0;
+  const started = Date.now();
+  try {
+    session.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = session.ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    session.ctx.createMediaStreamSource(stream).connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    level = () => { analyser.getFloatTimeDomainData(buf); return Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length); };
+  } catch { session.ctx = null; }
+  session.timer = setInterval(() => {
+    const now = Date.now();
+    if (level() > 0.02) { heard = true; quietSince = 0; } else if (heard && !quietSince) quietSince = now;
+    if (now - started > 6000 || (heard && quietSince && now - quietSince > 1200)) session.stop();
+  }, 100);
+  recorder.start();
+}
+
+async function recognise(blob) {
+  if (blob.size < 2000) return setVoiceStatus("Ничего не услышал. Попробуйте ещё раз.");
+  setVoiceStatus("Распознаю…");
+  const where = state.gps || state.loc;
+  const q = where ? `?lat=${where.lat.toFixed(5)}&lon=${where.lon.toFixed(5)}` : "";
+  let text = "";
+  try {
+    const res = await fetch(`/api/transcribe${q}`, { method: "POST", body: blob, headers: { "content-type": blob.type } });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error);
+    text = body.text.replace(/[.。]+$/, "");
+  } catch {
+    return setVoiceStatus("Не получилось распознать. Попробуйте ещё раз или введите текстом.");
+  }
+  // Whisper sometimes echoes its hint on silence; that is not an answer.
+  if (!text || /Например|Остановка в Варшаве/i.test(text)) return setVoiceStatus("Ничего не услышал. Попробуйте ещё раз.");
+  applyHeard(text);
+}
+
+function applyHeard(heard) {
+  const ranked = rankStopNames(state.stops, [heard]);
+  if (confidentMatch(ranked)) {
+    pickStop(ranked[0]);
+    // A wrong pick is one tap from the alternatives.
+    setVoiceStatus(`«${esc(heard)}» → <b>${esc(ranked[0].name)}</b> <button type="button" class="not-it" id="notIt">Не то?</button>`);
+    $("notIt").addEventListener("click", () => {
+      setVoiceStatus("");
+      els.stopq.value = heard;
+      showStops(rankStopNames(state.stops, [heard], 5).slice(1), `Вы сказали «${esc(heard)}». Может быть:`);
+    });
+  } else if (ranked.length) {
+    setVoiceStatus("");
+    els.stopq.value = heard;
+    showStops(ranked, `Вы сказали «${esc(heard)}». Какая остановка?`);
+  } else {
+    setVoiceStatus(`«${esc(heard)}» — такой остановки не нашёл.`);
+  }
+}
+
+els.mic.addEventListener("click", () => {
+  if (!canRecord || !state.stops) return;
+  if (recording) return stopRecording();
+  startRecording();
 });
 
 // Start
