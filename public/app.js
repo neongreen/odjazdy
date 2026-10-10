@@ -1,5 +1,5 @@
 import {
-  departures, formatDistance, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine, searchStops,
+  departures, distanceM, formatDistance, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine, searchStops,
 } from "./core.js";
 
 const $ = (id) => document.getElementById(id);
@@ -10,7 +10,8 @@ const els = {
 
 const state = {
   stops: null, lines: null, // Map line -> { line, type, color, name }
-  loc: null, // { lat, lon, source: "gps" | "stop", label }
+  loc: null, // where the lists are centred: { lat, lon, source: "gps" | "stop", label }
+  gps: null, // the user's own position, kept while a picked stop is shown: { lat, lon }
   geoError: null,
   line: "",
   lineData: new Map(),
@@ -94,7 +95,8 @@ function locate() {
   navigator.geolocation.watchPosition(
     (pos) => {
       const { latitude: lat, longitude: lon } = pos.coords;
-      if (state.loc?.source === "stop") return;
+      state.gps = { lat, lon };
+      if (state.loc?.source === "stop") return render();
       // Ignore jitter under 40 m to keep the list from jumping.
       if (state.loc && Math.hypot(lat - state.loc.lat, (lon - state.loc.lon) * 0.61) * 111000 < 40) return;
       state.loc = { lat, lon, source: "gps" };
@@ -125,9 +127,20 @@ function setLine(raw, { push = true } = {}) {
   if (line && state.lines?.has(line)) showLine(line);
 }
 
+// Distance from the user, never from the centre of a picked stop; null when the position is unknown.
+function fromYou(points) {
+  if (!state.gps) return null;
+  return Math.min(...points.map((p) => distanceM(state.gps.lat, state.gps.lon, p.lat, p.lon)));
+}
+const distLabel = (m) => (m == null ? "" : formatDistance(m));
+
 function renderWhere() {
   const { loc, geoError } = state;
-  if (loc?.source === "stop") els.where.innerHTML = `Остановка <b>${esc(loc.label)}</b> <span class="muted">· изменить</span>`;
+  if (loc?.source === "stop") {
+    const pick = [...state.stops.values()].filter((s) => s.name === loc.label);
+    const d = fromYou(pick);
+    els.where.innerHTML = `Остановка <b>${esc(loc.label)}</b> <span class="muted">· ${d == null ? "изменить" : `${formatDistance(d)} от вас`}</span>`;
+  }
   else if (loc && state.stops) {
     const g = nearestGroups(state.stops, loc.lat, loc.lon, { limit: 1, maxDist: 3000 })[0];
     els.where.innerHTML = g ? `Рядом <b>${esc(g.name)}</b> <span class="muted">· ${formatDistance(g.dist)}</span>` : "Вы далеко от Варшавы";
@@ -141,10 +154,11 @@ function renderNearby() {
   if (!groups.length) {
     return `<p class="empty">В радиусе 1,5 км нет остановок. Найдите остановку по названию.</p>`;
   }
-  return `<h2 class="section-title">Остановки рядом</h2>
+  const title = loc.source === "stop" ? `Остановки у ${esc(loc.label)}` : "Остановки рядом";
+  return `<h2 class="section-title">${title}</h2>
   <ul class="nearby">${groups.map((g) => `
     <li class="stop">
-      <div class="stop-head"><span class="stop-name">${esc(g.name)}</span><span class="dist">${formatDistance(g.dist)}</span></div>
+      <div class="stop-head"><span class="stop-name">${esc(g.name)}</span><span class="dist">${distLabel(fromYou(g.poles))}</span></div>
       <div class="chips">${g.lines.sort(lineCompare).map((l) => chip(l)).join("")}</div>
     </li>`).join("")}
   </ul>`;
@@ -181,7 +195,7 @@ function renderLine() {
     seenDirs.add(dirs);
     return true;
   }).slice(0, 4);
-  const far = poles.length && poles[0].dist > 900;
+  const far = loc.source === "gps" && poles.length && poles[0].dist > 900;
 
   const blocks = poles.map((p) => {
     const list = deps.get(p.id) || [];
@@ -195,7 +209,7 @@ function renderLine() {
     return `<article class="pole">
       <div class="pole-head">
         <span class="stop-name">${esc(p.name)}</span><span class="pole-code">${esc(p.code)}</span>
-        <span class="dist">${formatDistance(p.dist)}</span>
+        <span class="dist">${distLabel(fromYou([p]))}</span>
       </div>
       ${oneHead ? `<div class="dir">→ ${esc(heads[0])}</div>` : ""}
       ${list.length ? `<ol class="deps">${rows}</ol>` : `<p class="none">В ближайшие 2 часа отправлений нет.</p>`}
@@ -274,8 +288,8 @@ els.stopResults.addEventListener("click", (e) => {
   const b = e.target.closest(".stop-pick");
   if (!b) return;
   if (b.dataset.gps !== undefined) {
-    state.loc = null;
-    locate();
+    state.loc = state.gps ? { ...state.gps, source: "gps" } : null;
+    if (!state.gps) locate();
   } else {
     const g = els.stopResults._found[Number(b.dataset.i)];
     state.loc = { lat: g.lat, lon: g.lon, source: "stop", label: g.name };
