@@ -206,3 +206,19 @@ test("rankStopNames keeps a full stop name that contains a filler word", () => {
   assert.equal(rankStopNames(s, ["Ratusz Arsenał"])[0].name, "Ratusz Arsenał");
   assert.equal(rankStopNames(s, ["метро Кабаты"])[0].name, "Kabaty"); // "metro" as a filler still works
 });
+
+test("worker /api/transcribe: hints nearby stop names, caps size, refuses other origins", async () => {
+  const worker = (await import("../src/worker.js")).default;
+  const calls = [];
+  const env = {
+    ASSETS: { fetch: async () => new Response(JSON.stringify({ stops: [["a", "Orchowiecka", "01", 52.343, 20.973, []], ["b", "Pl. Narutowicza", "01", 52.219, 20.984, []]] })) },
+    AI: { run: async (model, input) => { calls.push({ model, input }); return { text: "Orchowiecka." }; } },
+  };
+  const post = (body, headers = {}) => worker.fetch(new Request("https://x.dev/api/transcribe?lat=52.34&lon=20.97", { method: "POST", body, headers }), env, {});
+  const ok = await post(new Uint8Array(3000));
+  assert.deepEqual(await ok.json(), { text: "Orchowiecka." });
+  assert.equal(calls[0].input.language, "ru");
+  assert.match(calls[0].input.initial_prompt, /^Остановка в Варшаве\. Например: Orchowiecka, Pl\. Narutowicza\.$/);
+  assert.equal((await post(new Uint8Array(1_000_001))).status, 413);
+  assert.equal((await post(new Uint8Array(10), { origin: "https://evil.example" })).status, 403);
+});

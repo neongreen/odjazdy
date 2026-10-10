@@ -331,50 +331,103 @@ els.stopResults.addEventListener("click", (e) => {
   pickStop(els.stopResults._found[Number(b.dataset.i)]);
 });
 
-// Voice: the browser recognises Russian speech; the result is then matched against the
-// stop list (rankStopNames), because browsers ignore grammar hints.
-const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-let listening = null;
-if (Recognition) els.mic.hidden = false;
-els.mic.addEventListener("click", () => {
-  if (listening) return listening.stop();
-  if (!state.stops) return;
-  const rec = new Recognition();
-  rec.lang = "ru-RU";
-  rec.interimResults = true;
-  rec.maxAlternatives = 5;
-  let finalAlts = null;
-  rec.onstart = () => { els.mic.classList.add("listening"); setVoiceStatus("Слушаю… назовите остановку"); };
-  rec.onresult = (e) => {
-    const r = e.results[e.results.length - 1];
-    els.stopq.value = r[0].transcript;
-    if (r.isFinal) finalAlts = Array.from(r, (a) => a.transcript);
-  };
-  rec.onerror = (e) => {
-    finalAlts = null;
-    setVoiceStatus(e.error === "not-allowed" || e.error === "service-not-allowed"
-      ? "Нет доступа к микрофону. Разрешите его в настройках браузера."
-      : e.error === "no-speech" ? "Ничего не услышал. Попробуйте ещё раз." : "Не получилось распознать. Попробуйте ещё раз.");
-  };
-  rec.onend = () => {
-    listening = null;
+// Voice: the phone records a few seconds of audio, our Worker transcribes it with Whisper
+// (hinted with nearby stop names), and the text is matched against the stop list here.
+// Recording works in iOS Safari and home-screen apps, where browser speech recognition does not.
+const canRecord = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+let recording = null; // { recorder, stream, ctx, timer }
+els.mic.hidden = !canRecord;
+
+function stopRecording() {
+  if (!recording) return;
+  const { recorder, stream, ctx, timer } = recording;
+  clearInterval(timer);
+  if (recorder.state !== "inactive") recorder.stop();
+  stream.getTracks().forEach((t) => t.stop());
+  ctx?.close();
+}
+
+async function startRecording() {
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    return setVoiceStatus("Нет доступа к микрофону. Разрешите его в настройках браузера.");
+  }
+  const recorder = new MediaRecorder(stream);
+  const chunks = [];
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    recording = null;
     els.mic.classList.remove("listening");
-    if (!finalAlts) { if (els.voiceStatus.textContent.startsWith("Слушаю")) setVoiceStatus(""); return; }
-    const heard = finalAlts[0];
-    const ranked = rankStopNames(state.stops, finalAlts);
-    if (confidentMatch(ranked)) {
-      setVoiceStatus(`«${esc(heard)}» → <b>${esc(ranked[0].name)}</b>`);
-      pickStop(ranked[0]);
-    } else if (ranked.length) {
+    recognise(new Blob(chunks, { type: recorder.mimeType || "audio/mp4" }));
+  };
+  // Stop on its own: after ~1.2 s of quiet once speech was heard, or after 6 s.
+  let ctx = null, heard = false, quietSince = 0;
+  const started = Date.now();
+  let level = () => 0;
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    const buf = new Float32Array(analyser.fftSize);
+    level = () => { analyser.getFloatTimeDomainData(buf); return Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length); };
+  } catch { ctx = null; }
+  const timer = setInterval(() => {
+    const now = Date.now();
+    if (level() > 0.02) { heard = true; quietSince = 0; } else if (heard && !quietSince) quietSince = now;
+    if (now - started > 6000 || (heard && quietSince && now - quietSince > 1200)) stopRecording();
+  }, 100);
+  recording = { recorder, stream, ctx, timer };
+  recorder.start();
+  els.mic.classList.add("listening");
+  setVoiceStatus("Слушаю… назовите остановку");
+}
+
+async function recognise(blob) {
+  if (blob.size < 2000) return setVoiceStatus("Ничего не услышал. Попробуйте ещё раз.");
+  setVoiceStatus("Распознаю…");
+  const where = state.gps || state.loc;
+  const q = where ? `?lat=${where.lat.toFixed(5)}&lon=${where.lon.toFixed(5)}` : "";
+  let text = "";
+  try {
+    const res = await fetch(`/api/transcribe${q}`, { method: "POST", body: blob, headers: { "content-type": blob.type } });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error);
+    text = body.text.replace(/[.。]+$/, "");
+  } catch {
+    return setVoiceStatus("Не получилось распознать. Попробуйте ещё раз или введите текстом.");
+  }
+  // Whisper sometimes echoes its hint on silence; that is not an answer.
+  if (!text || /Например|Остановка в Варшаве/i.test(text)) return setVoiceStatus("Ничего не услышал. Попробуйте ещё раз.");
+  applyHeard(text);
+}
+
+function applyHeard(heard) {
+  const ranked = rankStopNames(state.stops, [heard]);
+  if (confidentMatch(ranked)) {
+    pickStop(ranked[0]);
+    // A wrong pick is one tap from the alternatives.
+    setVoiceStatus(`«${esc(heard)}» → <b>${esc(ranked[0].name)}</b> <button type="button" class="not-it" id="notIt">Не то?</button>`);
+    $("notIt").addEventListener("click", () => {
       setVoiceStatus("");
       els.stopq.value = heard;
-      showStops(ranked, `Вы сказали «${esc(heard)}». Какая остановка?`);
-    } else {
-      setVoiceStatus(`«${esc(heard)}» — такой остановки не нашёл.`);
-    }
-  };
-  listening = rec;
-  try { rec.start(); } catch { listening = null; }
+      showStops(rankStopNames(state.stops, [heard], 5).slice(1), `Вы сказали «${esc(heard)}». Может быть:`);
+    });
+  } else if (ranked.length) {
+    setVoiceStatus("");
+    els.stopq.value = heard;
+    showStops(ranked, `Вы сказали «${esc(heard)}». Какая остановка?`);
+  } else {
+    setVoiceStatus(`«${esc(heard)}» — такой остановки не нашёл.`);
+  }
+}
+
+els.mic.addEventListener("click", () => {
+  if (!canRecord || !state.stops) return;
+  if (recording) return stopRecording();
+  startRecording();
 });
 
 // Start
