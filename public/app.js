@@ -1,11 +1,12 @@
 import {
-  departures, distanceM, formatDistance, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine, searchStops,
+  confidentMatch, departures, distanceM, formatDistance, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine,
+  rankStopNames, searchStops,
 } from "./core.js";
 
 const $ = (id) => document.getElementById(id);
 const els = {
   where: $("where"), line: $("line"), clear: $("clear"), ask: $("ask"), place: $("place"),
-  stopq: $("stopq"), stopResults: $("stopResults"), results: $("results"), feedTime: $("feedTime"),
+  stopq: $("stopq"), stopResults: $("stopResults"), mic: $("mic"), voiceStatus: $("voiceStatus"), results: $("results"), feedTime: $("feedTime"),
 };
 
 const state = {
@@ -105,7 +106,6 @@ function locate() {
     },
     (err) => {
       state.geoError = err.code === 1 ? "denied" : "unavailable";
-      if (!state.loc) els.place.hidden = false;
       render();
     },
     { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 },
@@ -274,15 +274,47 @@ els.results.addEventListener("click", (e) => {
   if (b) { setLine(b.dataset.line); window.scrollTo({ top: 0, behavior: "smooth" }); }
 });
 els.where.addEventListener("click", () => {
-  els.place.hidden = !els.place.hidden;
-  if (!els.place.hidden) els.stopq.focus();
+  els.stopq.focus();
+  els.place.scrollIntoView({ behavior: "smooth", block: "center" });
 });
-els.stopq.addEventListener("input", () => {
-  const found = state.stops ? searchStops(state.stops, els.stopq.value) : [];
-  const gps = state.loc?.source === "stop" ? `<li><button type="button" class="stop-pick" data-gps>Моё местоположение</button></li>` : "";
-  els.stopResults.innerHTML = gps + found.map((g, i) =>
+
+function showStops(found, heading = "") {
+  const gps = state.loc?.source === "stop" && state.gps ? `<li><button type="button" class="stop-pick" data-gps>Моё местоположение</button></li>` : "";
+  els.stopResults.innerHTML = (heading ? `<li class="why">${heading}</li>` : "") + gps + found.map((g, i) =>
     `<li><button type="button" class="stop-pick" data-i="${i}">${esc(g.name)}</button></li>`).join("");
   els.stopResults._found = found;
+}
+
+function setVoiceStatus(html) {
+  els.voiceStatus.hidden = !html;
+  els.voiceStatus.innerHTML = html || "";
+}
+
+function pickStop(g) {
+  state.loc = { lat: g.lat, lon: g.lon, source: "stop", label: g.name };
+  els.stopq.value = "";
+  els.stopq.blur();
+  els.stopResults.innerHTML = "";
+  els.stopResults._found = [];
+  render();
+}
+// With a picked stop shown, an empty focused field offers the way back to the user's position.
+els.stopq.addEventListener("focus", () => { if (!els.stopq.value.trim()) showStops([]); });
+
+els.stopq.addEventListener("input", () => {
+  setVoiceStatus("");
+  const q = els.stopq.value;
+  if (!state.stops || !q.trim()) return showStops([]);
+  const found = searchStops(state.stops, q);
+  // Nothing matches as typed: offer the closest-sounding names instead of an empty list.
+  if (!found.length && q.trim().length >= 3) {
+    const guess = rankStopNames(state.stops, [q]);
+    return showStops(guess, guess.length ? "Возможно, вы имели в виду:" : "Ничего не нашлось");
+  }
+  showStops(found);
+});
+els.stopq.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && els.stopResults._found?.length) { e.preventDefault(); pickStop(els.stopResults._found[0]); }
 });
 els.stopResults.addEventListener("click", (e) => {
   const b = e.target.closest(".stop-pick");
@@ -290,14 +322,59 @@ els.stopResults.addEventListener("click", (e) => {
   if (b.dataset.gps !== undefined) {
     state.loc = state.gps ? { ...state.gps, source: "gps" } : null;
     if (!state.gps) locate();
-  } else {
-    const g = els.stopResults._found[Number(b.dataset.i)];
-    state.loc = { lat: g.lat, lon: g.lon, source: "stop", label: g.name };
+    els.stopq.value = "";
+    showStops([]);
+    setVoiceStatus("");
+    return render();
   }
-  els.place.hidden = true;
-  els.stopq.value = "";
-  els.stopResults.innerHTML = "";
-  render();
+  setVoiceStatus("");
+  pickStop(els.stopResults._found[Number(b.dataset.i)]);
+});
+
+// Voice: the browser recognises Russian speech; the result is then matched against the
+// stop list (rankStopNames), because browsers ignore grammar hints.
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let listening = null;
+if (Recognition) els.mic.hidden = false;
+els.mic.addEventListener("click", () => {
+  if (listening) return listening.stop();
+  if (!state.stops) return;
+  const rec = new Recognition();
+  rec.lang = "ru-RU";
+  rec.interimResults = true;
+  rec.maxAlternatives = 5;
+  let finalAlts = null;
+  rec.onstart = () => { els.mic.classList.add("listening"); setVoiceStatus("Слушаю… назовите остановку"); };
+  rec.onresult = (e) => {
+    const r = e.results[e.results.length - 1];
+    els.stopq.value = r[0].transcript;
+    if (r.isFinal) finalAlts = Array.from(r, (a) => a.transcript);
+  };
+  rec.onerror = (e) => {
+    finalAlts = null;
+    setVoiceStatus(e.error === "not-allowed" || e.error === "service-not-allowed"
+      ? "Нет доступа к микрофону. Разрешите его в настройках браузера."
+      : e.error === "no-speech" ? "Ничего не услышал. Попробуйте ещё раз." : "Не получилось распознать. Попробуйте ещё раз.");
+  };
+  rec.onend = () => {
+    listening = null;
+    els.mic.classList.remove("listening");
+    if (!finalAlts) { if (els.voiceStatus.textContent.startsWith("Слушаю")) setVoiceStatus(""); return; }
+    const heard = finalAlts[0];
+    const ranked = rankStopNames(state.stops, finalAlts);
+    if (confidentMatch(ranked)) {
+      setVoiceStatus(`«${esc(heard)}» → <b>${esc(ranked[0].name)}</b>`);
+      pickStop(ranked[0]);
+    } else if (ranked.length) {
+      setVoiceStatus("");
+      els.stopq.value = heard;
+      showStops(ranked, `Вы сказали «${esc(heard)}». Какая остановка?`);
+    } else {
+      setVoiceStatus(`«${esc(heard)}» — такой остановки не нашёл.`);
+    }
+  };
+  listening = rec;
+  try { rec.start(); } catch { listening = null; }
 });
 
 // Start

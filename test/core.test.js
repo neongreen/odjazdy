@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  departures, estimateProgress, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine, searchStops, tripKey,
+  confidentMatch, departures, estimateProgress, formatWait, indexStops, nearestGroups, normalizeLine, polesForLine, rankStopNames, searchStops, tripKey,
 } from "../public/core.js";
 import { filterFeed, lineOfTrip } from "../src/worker.js";
 
@@ -168,4 +168,28 @@ test("searchStops: Russian spelling, ZTM abbreviations and sound-alike fallback"
   assert.deepEqual(names("дворзец центральны"), ["Dw. Centralny"]);
   // A query that matches as typed does not drag in sound-alikes (Grzybowski ~ "zb").
   assert.deepEqual(names("pl zbaw"), ["Pl. Zbawiciela"]);
+});
+
+test("rankStopNames: dictated Russian resolves to the Polish stop name", () => {
+  const s = indexStops([
+    ["O1", "Orchowiecka", "01", 52.343, 20.973, []],
+    ["R1", "Rakowiecka", "01", 52.2, 21.0, []],
+    ["T1", "Tarchomin", "01", 52.318, 20.953, []],
+    ["D1", "Dw. Centralny", "01", 52.228, 21.003, []],
+    ["W1", "Warszawa Wschodnia", "01", 52.25, 21.05, []],
+    ["W2", "Warszawa Zachodnia", "01", 52.22, 20.96, []],
+  ]);
+  const top = (alts) => rankStopNames(s, alts)[0]?.name;
+  assert.equal(top(["Арховецка"]), "Orchowiecka"); // misheard first vowel
+  assert.ok(confidentMatch(rankStopNames(s, ["Арховецка"])));
+  assert.equal(top(["остановка Тархомин"]), "Tarchomin"); // filler word ignored
+  assert.equal(top(["центральный вокзал"]), "Dw. Centralny"); // Russian word + word order
+  assert.equal(top(["что-то совсем другое", "Варшава Восточная"]), "Warszawa Wschodnia"); // any alternative can win
+  assert.deepEqual(rankStopNames(s, ["ну"]), []);
+});
+
+test("confidentMatch needs a clear winner", () => {
+  assert.equal(confidentMatch([{ score: 0.9 }, { score: 0.85 }]), false);
+  assert.equal(confidentMatch([{ score: 0.7 }]), false);
+  assert.equal(confidentMatch([{ score: 1 }, { score: 0.8 }]), true);
 });

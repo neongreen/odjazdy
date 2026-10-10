@@ -265,4 +265,76 @@ export function searchStops(stopsById, query, limit = 8) {
     .map((g) => ({ name: g.name, poles: g.poles, lat: avg(g.poles.map((p) => p.lat)), lon: avg(g.poles.map((p) => p.lon)) }));
 }
 
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// Russian words for things Warsaw stop names spell in Polish (by stem).
+const RU_WORDS = [
+  [/^площад/, "plac"], [/^вокзал/, "dworzec"], [/^восточн/, "wschodni"], [/^западн/, "zachodni"],
+  [/^аэропорт/, "lotnisko"], [/^алле/, "aleja"], [/^кладбищ/, "cmentarz"], [/^мост/, "most"],
+];
+const translateRu = (text) => String(text).toLowerCase().split(/\s+/)
+  .map((w) => { const hit = RU_WORDS.find(([re]) => re.test(w)); return hit ? hit[1] : w; }).join(" ");
+
+// Words people say around a stop name that are not part of it.
+const FILLER = new Set(["ostanowka", "ostanowki", "przystanek", "do", "na", "w", "u", "ulica", "metro"]);
+
+/**
+ * Ranks stop names against free speech: each recognised alternative is transliterated,
+ * reduced to its consonant skeleton and compared with every stop name by edit distance,
+ * over every run of consecutive words so extra words ("остановка ...") do not hurt.
+ * Returns [{ name, score (0..1), poles, lat, lon }], best first.
+ */
+export function rankStopNames(stopsById, transcripts, limit = 3) {
+  const spans = new Set();
+  for (const t of transcripts) {
+    const words = searchKey(translateRu(t)).split(" ").filter((w) => w && !FILLER.has(w));
+    for (let i = 0; i < words.length; i++) {
+      for (let j = i + 1; j <= Math.min(words.length, i + 3); j++) {
+        const run = words.slice(i, j);
+        // Russian often puts the adjective first ("центральный вокзал" = Dworzec Centralny).
+        for (const order of j - i === 2 ? [run, [run[1], run[0]]] : [run]) {
+          const sk = skeleton(order.join(""));
+          if (sk.length >= 3) spans.add(sk);
+        }
+      }
+    }
+  }
+  if (!spans.size) return [];
+  const groups = new Map();
+  for (const st of stopsById.values()) {
+    if (!groups.has(st.name)) groups.set(st.name, []);
+    groups.get(st.name).push(st);
+  }
+  const scored = [];
+  for (const [name, poles] of groups) {
+    const forms = new Set([searchKey(name), searchKey(expandName(name))].map((k) => skeleton(k.replace(/ /g, ""))));
+    let best = 0;
+    for (const f of forms) {
+      for (const q of spans) {
+        const score = 1 - levenshtein(q, f) / Math.max(q.length, f.length);
+        if (score > best) best = score;
+      }
+    }
+    if (best >= 0.5) scored.push({ name, score: best, poles, lat: avg(poles.map((p) => p.lat)), lon: avg(poles.map((p) => p.lon)) });
+  }
+  return scored.sort((a, b) => b.score - a.score || a.name.length - b.name.length).slice(0, limit);
+}
+
+/** Whether a voice match is safe to apply without asking: strong and clearly ahead of the next one. */
+export function confidentMatch(ranked) {
+  const [a, b] = ranked;
+  return !!a && a.score >= 0.75 && (!b || a.score - b.score >= 0.15);
+}
+
 const avg = (xs) => xs.reduce((a, b) => a + b, 0) / xs.length;
